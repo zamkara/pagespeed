@@ -8,22 +8,22 @@ const REPO: &str = "zamkara/pagespeed";
 #[derive(Parser)]
 #[command(name = "pagespeed", version = VERSION, about = "Google PageSpeed Insights CLI")]
 struct Cli {
-    /// Domain atau URL yang dianalisis
+    /// Domain or URL to analyze
     url: Option<String>,
 
-    /// Strategy: mobile atau desktop
+    /// Strategy: mobile or desktop
     #[arg(short, long, default_value = "mobile")]
     strategy: String,
 
-    /// Kategori (comma-separated: performance,accessibility,best-practices,seo)
+    /// Categories to analyze (comma-separated: performance,accessibility,best-practices,seo)
     #[arg(short, long, default_value = "performance")]
     categories: String,
 
-    /// Google API key (opsional jika PAGESPEED_API_KEY sudah di-set)
+    /// Google API key (optional if PAGESPEED_API_KEY env var is set)
     #[arg(short, long, env = "PAGESPEED_API_KEY")]
     key: Option<String>,
 
-    /// Update pagespeed ke versi terbaru
+    /// Update pagespeed to the latest release
     #[arg(short, long)]
     update: bool,
 }
@@ -33,21 +33,19 @@ fn resolve_api_key(key_arg: Option<String>) -> Result<String, Box<dyn std::error
         return Ok(k);
     }
 
-    // prompt user
-    eprintln!("PAGESPEED_API_KEY belum di-set.");
-    eprintln!("Dapatkan API key di: https://console.cloud.google.com/");
-    eprint!("Masukkan API key: ");
+    eprintln!("PAGESPEED_API_KEY is not set.");
+    eprintln!("Get your API key at: https://console.cloud.google.com/");
+    eprint!("Enter API key: ");
     io::stderr().flush()?;
 
     let key = rpassword::read_password()?;
     let key = key.trim().to_string();
 
     if key.is_empty() {
-        eprintln!("API key tidak boleh kosong.");
+        eprintln!("API key cannot be empty.");
         std::process::exit(1);
     }
 
-    // save to shell config
     save_api_key(&key)?;
 
     Ok(key)
@@ -55,7 +53,7 @@ fn resolve_api_key(key_arg: Option<String>) -> Result<String, Box<dyn std::error
 
 fn save_api_key(key: &str) -> Result<(), Box<dyn std::error::Error>> {
     let shell = std::env::var("SHELL").unwrap_or_default();
-    let home = dirs::home_dir().ok_or("Tidak dapat menemukan home directory")?;
+    let home = dirs::home_dir().ok_or("Cannot find home directory")?;
 
     let rc_file = if shell.contains("zsh") {
         home.join(".zshrc")
@@ -78,11 +76,8 @@ fn save_api_key(key: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     file.write_all(export_line.as_bytes())?;
 
-    eprintln!(
-        "API key disimpan ke {}",
-        rc_file.display()
-    );
-    eprintln!("Jalankan: source {}", rc_file.display());
+    eprintln!("API key saved to {}", rc_file.display());
+    eprintln!("Run: source {}", rc_file.display());
 
     Ok(())
 }
@@ -98,8 +93,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let raw_url = match cli.url {
         Some(ref u) => u.clone(),
         None => {
-            eprintln!("Error: URL diperlukan. Contoh: pagespeed example.com");
-            eprintln!("Gunakan --help untuk bantuan.");
+            eprintln!("Error: URL is required. Example: pagespeed example.com");
+            eprintln!("Use --help for usage.");
             std::process::exit(1);
         }
     };
@@ -156,22 +151,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let json_str = serde_json::to_string_pretty(&output)?;
     std::fs::write(&report_path, &json_str)?;
 
-    // summary.txt — ringkasan cepat untuk dibaca manusia
     let summary = build_summary(&output);
     std::fs::write(format!("{}/summary.txt", folder), &summary)?;
 
-    eprintln!("Folder hasil: {}/", folder);
+    eprintln!("Output folder: {}/", folder);
     eprintln!("  - report.json");
     eprintln!("  - summary.txt");
 
-    // cetak nama folder ke stdout supaya bisa di-pipe
     println!("{}", basename);
 
     Ok(())
 }
 
 async fn self_update() -> Result<(), Box<dyn std::error::Error>> {
-    eprintln!("Memeriksa versi terbaru dari GitHub...");
+    eprintln!("Checking for latest release on GitHub...");
 
     let client = reqwest::Client::builder()
         .user_agent(format!("pagespeed/{}", VERSION))
@@ -190,18 +183,18 @@ async fn self_update() -> Result<(), Box<dyn std::error::Error>> {
         .trim_start_matches('v');
 
     if latest.is_empty() {
-        eprintln!("Gagal mendapatkan versi terbaru.");
+        eprintln!("Failed to fetch latest version.");
         std::process::exit(1);
     }
 
     if latest == VERSION {
-        eprintln!("pagespeed sudah versi terbaru (v{}).", VERSION);
+        eprintln!("Already up to date (v{}).", VERSION);
         return Ok(());
     }
 
-    eprintln!("Versi saat ini : v{}", VERSION);
-    eprintln!("Versi terbaru  : v{}", latest);
-    eprintln!("Mengunduh pembaruan...");
+    eprintln!("Current version : v{}", VERSION);
+    eprintln!("Latest version  : v{}", latest);
+    eprintln!("Downloading update...");
 
     let target = current_target();
     let ext = if cfg!(target_os = "windows") { "zip" } else { "tar.gz" };
@@ -218,8 +211,8 @@ async fn self_update() -> Result<(), Box<dyn std::error::Error>> {
         .map(|s| s.to_string());
 
     let Some(url) = asset_url else {
-        eprintln!("Asset tidak ditemukan untuk target: {}", target);
-        eprintln!("Cek release manual: https://github.com/{}/releases", REPO);
+        eprintln!("No asset found for target: {}", target);
+        eprintln!("Check releases manually: https://github.com/{}/releases", REPO);
         std::process::exit(1);
     };
 
@@ -228,7 +221,6 @@ async fn self_update() -> Result<(), Box<dyn std::error::Error>> {
     let current_exe = std::env::current_exe()?;
     let tmp = current_exe.with_extension("tmp");
 
-    // ekstrak binary dari archive
     #[cfg(unix)]
     {
         use std::io::Read;
@@ -256,7 +248,6 @@ async fn self_update() -> Result<(), Box<dyn std::error::Error>> {
         std::fs::write(&tmp, &buf)?;
     }
 
-    // set executable permission (unix)
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -264,7 +255,7 @@ async fn self_update() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     std::fs::rename(&tmp, &current_exe)?;
-    eprintln!("Update berhasil! pagespeed v{} telah terpasang.", latest);
+    eprintln!("Updated successfully to v{}.", latest);
 
     Ok(())
 }

@@ -18,7 +18,7 @@ case "$OS" in
       x86_64)  TARGET="x86_64-unknown-linux-gnu" ;;
       aarch64) TARGET="aarch64-unknown-linux-gnu" ;;
       armv7*)  TARGET="armv7-unknown-linux-gnueabihf" ;;
-      *)       err "Arsitektur tidak didukung: $ARCH" ;;
+      *)       err "Unsupported architecture: $ARCH" ;;
     esac
     EXT="tar.gz"
     ;;
@@ -26,7 +26,7 @@ case "$OS" in
     case "$ARCH" in
       x86_64)  TARGET="x86_64-apple-darwin" ;;
       arm64)   TARGET="aarch64-apple-darwin" ;;
-      *)       err "Arsitektur tidak didukung: $ARCH" ;;
+      *)       err "Unsupported architecture: $ARCH" ;;
     esac
     EXT="tar.gz"
     ;;
@@ -34,16 +34,15 @@ case "$OS" in
     case "$ARCH" in
       x86_64)  TARGET="x86_64-pc-windows-msvc" ;;
       aarch64) TARGET="aarch64-pc-windows-msvc" ;;
-      *)       err "Arsitektur tidak didukung: $ARCH" ;;
+      *)       err "Unsupported architecture: $ARCH" ;;
     esac
     EXT="zip"
     BIN_NAME="pagespeed.exe"
     ;;
-  *) err "OS tidak didukung: $OS" ;;
+  *) err "Unsupported OS: $OS" ;;
 esac
 
-# fetch latest release tag
-log "Mengambil versi terbaru..."
+log "Fetching latest release..."
 if command -v curl >/dev/null 2>&1; then
   LATEST=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
     | grep '"tag_name"' | sed 's/.*"tag_name": *"\(.*\)".*/\1/')
@@ -51,42 +50,41 @@ elif command -v wget >/dev/null 2>&1; then
   LATEST=$(wget -qO- "https://api.github.com/repos/$REPO/releases/latest" \
     | grep '"tag_name"' | sed 's/.*"tag_name": *"\(.*\)".*/\1/')
 else
-  err "curl atau wget diperlukan"
+  err "curl or wget is required"
 fi
 
-[ -z "$LATEST" ] && err "Gagal mendapatkan versi terbaru"
+[ -z "$LATEST" ] && err "Failed to fetch latest version"
 
-log "Versi: $LATEST | Target: $TARGET"
+log "Version: $LATEST | Target: $TARGET"
 
 ASSET="pagespeed-${LATEST}-${TARGET}.${EXT}"
 URL="https://github.com/$REPO/releases/download/$LATEST/$ASSET"
 TMP=$(mktemp -d)
 
-log "Mengunduh $ASSET..."
+log "Downloading $ASSET..."
 if command -v curl >/dev/null 2>&1; then
   curl -fsSL "$URL" -o "$TMP/$ASSET"
 else
   wget -qO "$TMP/$ASSET" "$URL"
 fi
 
-log "Mengekstrak..."
+log "Extracting..."
 if [ "$EXT" = "tar.gz" ]; then
   tar -xzf "$TMP/$ASSET" -C "$TMP"
 else
   unzip -q "$TMP/$ASSET" -d "$TMP"
 fi
 
-# install
 if [ -w "$INSTALL_DIR" ]; then
   mv "$TMP/$BIN_NAME" "$INSTALL_DIR/$BIN_NAME"
   chmod +x "$INSTALL_DIR/$BIN_NAME"
 else
-  log "Membutuhkan sudo untuk install ke $INSTALL_DIR"
+  log "Requires sudo to install to $INSTALL_DIR"
   sudo mv "$TMP/$BIN_NAME" "$INSTALL_DIR/$BIN_NAME"
   sudo chmod +x "$INSTALL_DIR/$BIN_NAME"
 fi
 
 rm -rf "$TMP"
 
-log "pagespeed $LATEST berhasil dipasang di $INSTALL_DIR/$BIN_NAME"
-log "Jalankan: pagespeed --help"
+log "pagespeed $LATEST installed to $INSTALL_DIR/$BIN_NAME"
+log "Run: pagespeed --help"

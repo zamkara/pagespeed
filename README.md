@@ -1,6 +1,6 @@
 # pagespeed
 
-CLI tool untuk Google PageSpeed Insights — menghasilkan laporan lengkap level Lighthouse dalam format JSON, tersimpan rapi per folder per test.
+CLI tool for Google PageSpeed Insights — generates full Lighthouse-level reports as JSON, organized per run into individual folders.
 
 ## Install
 
@@ -8,58 +8,58 @@ CLI tool untuk Google PageSpeed Insights — menghasilkan laporan lengkap level 
 curl -fsSL https://raw.githubusercontent.com/zamkara/pagespeed/main/install.sh | sh
 ```
 
-Mendukung Linux (x86\_64, ARM64, ARMv7), macOS (Intel & Apple Silicon), dan Windows (x86\_64, ARM64).
+Supports Linux (x86\_64, ARM64, ARMv7), macOS (Intel & Apple Silicon), and Windows (x86\_64).
 
-> Untuk install ke direktori custom:
+> To install to a custom directory:
 > ```sh
 > INSTALL_DIR=~/.local/bin curl -fsSL https://raw.githubusercontent.com/zamkara/pagespeed/main/install.sh | sh
 > ```
 
 ---
 
-## Prasyarat
+## Prerequisites
 
-Butuh API key dari Google PageSpeed Insights:
+Requires a Google PageSpeed Insights API key:
 
-1. Buka [Google Cloud Console](https://console.cloud.google.com/)
-2. Aktifkan **PageSpeed Insights API**
-3. Buat API key di **APIs & Services → Credentials**
+1. Open [Google Cloud Console](https://console.cloud.google.com/)
+2. Enable the **PageSpeed Insights API**
+3. Create an API key under **APIs & Services → Credentials**
 
-API key bisa di-set via environment variable atau diinput interaktif saat pertama kali dijalankan.
+The API key can be set via the `PAGESPEED_API_KEY` environment variable. If not set, the tool will prompt for it on first run and save it automatically to your shell config.
 
 ---
 
-## Penggunaan
+## Usage
 
 ```sh
 pagespeed <domain>
 ```
 
-Jika `PAGESPEED_API_KEY` belum di-set, tool akan meminta input dan menyimpannya otomatis ke shell config (`~/.bashrc`, `~/.zshrc`, atau `~/.config/fish/config.fish`).
+If `PAGESPEED_API_KEY` is not set, the tool will prompt for it and save it to `~/.bashrc`, `~/.zshrc`, or `~/.config/fish/config.fish` depending on your shell.
 
-### Opsi
+### Options
 
-| Flag | Default | Keterangan |
-|------|---------|------------|
-| `<domain>` | — | URL atau domain yang dianalisis |
-| `-s, --strategy` | `mobile` | Strategy: `mobile` atau `desktop` |
-| `-c, --categories` | `performance` | Kategori: `performance`, `accessibility`, `best-practices`, `seo` (bisa kombinasi, pisah koma) |
+| Flag | Default | Description |
+|------|---------|-------------|
+| `<domain>` | — | URL or domain to analyze |
+| `-s, --strategy` | `mobile` | Strategy: `mobile` or `desktop` |
+| `-c, --categories` | `performance` | Categories: `performance`, `accessibility`, `best-practices`, `seo` (comma-separated) |
 | `-k, --key` | env `PAGESPEED_API_KEY` | Google API key |
-| `-u, --update` | — | Update pagespeed ke versi terbaru |
+| `-u, --update` | — | Update pagespeed to the latest release |
 
-### Contoh
+### Examples
 
 ```sh
-# analisis dasar
+# Basic analysis
 pagespeed example.com
 
-# desktop + semua kategori
+# Desktop strategy with all categories
 pagespeed example.com --strategy desktop --categories performance,accessibility,best-practices,seo
 
-# gunakan API key langsung
+# Pass API key directly
 pagespeed example.com --key AIza...
 
-# update ke versi terbaru
+# Update to latest version
 pagespeed -u
 ```
 
@@ -67,22 +67,22 @@ pagespeed -u
 
 ## Output
 
-Setiap test menghasilkan folder dengan format:
+Each run produces a folder named:
 
 ```
 <domain>-<strategy>-<YYYYMMDD>-<HHMMSS>/
-├── report.json     # data Lighthouse lengkap (semua audit, metrics, entities, dll)
-└── summary.txt     # ringkasan: skor, metrik utama, daftar issue
+├── report.json     # Full Lighthouse data — all audits, metrics, entities, etc.
+└── summary.txt     # Human-readable summary: scores, key metrics, issues
 ```
 
-Contoh:
+Example:
 ```
 cv.zamkara.uk-mobile-20260629-143200/
 ├── report.json
 └── summary.txt
 ```
 
-### Struktur `report.json`
+### `report.json` structure
 
 ```json
 {
@@ -100,8 +100,7 @@ cv.zamkara.uk-mobile-20260629-143200/
       "score": 0.91,
       "numericValue": 1726,
       "details": { ... }
-    },
-    ...
+    }
   },
   "environment": { ... },
   "entities": [ ... ],
@@ -117,11 +116,11 @@ cv.zamkara.uk-mobile-20260629-143200/
 pagespeed -u
 ```
 
-Mendeteksi versi terbaru dari GitHub Releases, mengunduh binary yang sesuai dengan arsitektur sistem, dan mengganti binary yang sedang berjalan secara otomatis.
+Detects the latest release from GitHub, downloads the matching binary for your OS and architecture, and replaces the running binary in place.
 
 ---
 
-## Build dari source
+## Build from source
 
 ```sh
 git clone https://github.com/zamkara/pagespeed.git
@@ -129,11 +128,11 @@ cd pagespeed
 cargo build --release
 ```
 
-Atau gunakan script untuk build semua target:
+Or use the build script for a specific target:
 
 ```sh
-./build-prod.sh                          # native
-./build-prod.sh aarch64-unknown-linux-gnu  # cross
+./build-prod.sh                              # native target
+./build-prod.sh aarch64-unknown-linux-musl   # cross-compile
 ```
 
 ---
