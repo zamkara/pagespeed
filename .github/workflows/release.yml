@@ -2,8 +2,8 @@ name: Build & Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -47,7 +47,7 @@ jobs:
             archive: tar.gz
 
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
             use_cross: false
             archive: tar.gz
 
@@ -90,8 +90,10 @@ jobs:
         if: matrix.archive == 'tar.gz'
         shell: bash
         run: |
+          SHORT="${{ github.sha }}"
+          SHORT="${SHORT:0:8}"
           BIN=target/${{ matrix.target }}/release/pagespeed
-          ARCHIVE=pagespeed-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
+          ARCHIVE=pagespeed-build-${SHORT}-${{ matrix.target }}.tar.gz
           tar -czf "$ARCHIVE" -C "$(dirname $BIN)" "$(basename $BIN)"
           echo "ASSET=$ARCHIVE" >> $GITHUB_ENV
           sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
@@ -100,8 +102,9 @@ jobs:
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
+          $short = "${{ github.sha }}".Substring(0, 8)
           $bin = "target\${{ matrix.target }}\release\pagespeed.exe"
-          $archive = "pagespeed-${{ github.ref_name }}-${{ matrix.target }}.zip"
+          $archive = "pagespeed-build-${short}-${{ matrix.target }}.zip"
           Compress-Archive -Path $bin -DestinationPath $archive
           "ASSET=$archive" | Out-File -FilePath $env:GITHUB_ENV -Append
           $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
@@ -134,11 +137,11 @@ jobs:
       - name: Gather build info
         id: info
         run: |
-          TAG="${{ github.ref_name }}"
           COMMIT="${{ github.sha }}"
           SHORT="${COMMIT:0:8}"
+          TAG="build-${SHORT}"
           DATE=$(date -u "+%Y-%m-%d %H:%M:%S UTC")
-          PREV_TAG=$(git tag --sort=-version:refname | grep -v "^${TAG}$" | head -1)
+          PREV_TAG=$(git tag --sort=-version:refname | head -1)
 
           echo "tag=$TAG"           >> $GITHUB_OUTPUT
           echo "commit=$COMMIT"     >> $GITHUB_OUTPUT
@@ -178,7 +181,8 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          name: "${{ steps.info.outputs.tag }}"
+          tag_name: "${{ steps.info.outputs.tag }}"
+          name: "Build ${{ steps.info.outputs.short }}"
           body: |
             ## pagespeed ${{ steps.info.outputs.tag }}
 
