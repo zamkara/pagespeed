@@ -78,12 +78,21 @@ jobs:
         with:
           tool: cross
 
+      - name: Set build tag
+        id: tag
+        shell: bash
+        run: echo "build_tag=build-$(echo '${{ github.sha }}' | cut -c1-8)" >> $GITHUB_OUTPUT
+
       - name: Build (native)
         if: matrix.use_cross != true
+        env:
+          PAGESPEED_BUILD_TAG: ${{ steps.tag.outputs.build_tag }}
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Build (cross)
         if: matrix.use_cross == true
+        env:
+          PAGESPEED_BUILD_TAG: ${{ steps.tag.outputs.build_tag }}
         run: cross build --release --target ${{ matrix.target }}
 
       - name: Package (Unix)

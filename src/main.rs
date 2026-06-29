@@ -190,28 +190,32 @@ async fn self_update() -> Result<(), Box<dyn std::error::Error>> {
         .json()
         .await?;
 
-    let latest = release["tag_name"]
+    let tag_name = release["tag_name"]
         .as_str()
         .unwrap_or("")
-        .trim_start_matches('v');
+        .to_string();
 
-    if latest.is_empty() {
+    if tag_name.is_empty() {
         eprintln!("Failed to fetch latest version.");
         std::process::exit(1);
     }
 
-    if latest == VERSION {
-        eprintln!("Already up to date (v{}).", VERSION);
+    // embed current build tag at compile time via PAGESPEED_BUILD_TAG env var,
+    // fall back to Cargo version for semver releases
+    let current_tag = option_env!("PAGESPEED_BUILD_TAG").unwrap_or(VERSION);
+
+    if tag_name == current_tag {
+        eprintln!("Already up to date ({}).", tag_name);
         return Ok(());
     }
 
-    eprintln!("Current version : v{}", VERSION);
-    eprintln!("Latest version  : v{}", latest);
+    eprintln!("Current : {}", current_tag);
+    eprintln!("Latest  : {}", tag_name);
     eprintln!("Downloading update...");
 
     let target = current_target();
     let ext = if cfg!(target_os = "windows") { "zip" } else { "tar.gz" };
-    let asset_name = format!("pagespeed-v{}-{}.{}", latest, target, ext);
+    let asset_name = format!("pagespeed-{}-{}.{}", tag_name, target, ext);
 
     let asset_url = release["assets"]
         .as_array()
@@ -268,7 +272,7 @@ async fn self_update() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     std::fs::rename(&tmp, &current_exe)?;
-    eprintln!("Updated successfully to v{}.", latest);
+    eprintln!("Updated successfully to {}.", tag_name);
 
     Ok(())
 }
