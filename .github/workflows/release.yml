@@ -153,13 +153,11 @@ jobs:
         id: changelog
         run: |
           PREV="${{ steps.info.outputs.prev_tag }}"
-          if [ -n "$PREV" ]; then
-            LOG=$(git log "$PREV".."${{ steps.info.outputs.tag }}" \
-              --pretty=format:"- %s ([%h](https://github.com/${{ github.repository }}/commit/%H)) — %an" \
-              --no-merges)
+          FORMAT="- %s ([%h](https://github.com/${{ github.repository }}/commit/%H)) — %an"
+          if [ -n "$PREV" ] && git rev-parse "$PREV" >/dev/null 2>&1; then
+            LOG=$(git log "$PREV".."${{ github.sha }}" --pretty=format:"$FORMAT" --no-merges)
           else
-            LOG=$(git log --pretty=format:"- %s ([%h](https://github.com/${{ github.repository }}/commit/%H)) — %an" \
-              --no-merges)
+            LOG=$(git log "${{ github.sha }}" -20 --pretty=format:"$FORMAT" --no-merges)
           fi
           echo "log<<EOF" >> $GITHUB_OUTPUT
           echo "$LOG"     >> $GITHUB_OUTPUT
