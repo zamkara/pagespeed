@@ -11,12 +11,12 @@ struct Cli {
     /// Domain or URL to analyze
     url: Option<String>,
 
-    /// Strategy: mobile or desktop
-    #[arg(short, long, default_value = "mobile")]
+    /// Strategy: mobile, desktop, or both (default: both)
+    #[arg(short, long, default_value = "both")]
     strategy: String,
 
-    /// Categories to analyze (comma-separated: performance,accessibility,best-practices,seo)
-    #[arg(short, long, default_value = "performance")]
+    /// Categories to analyze (comma-separated, default: all)
+    #[arg(short, long, default_value = "performance,accessibility,best-practices,seo")]
     categories: String,
 
     /// Google API key (optional if PAGESPEED_API_KEY env var is set)
@@ -113,52 +113,65 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|s| s.trim().to_string())
         .collect();
 
-    let mut query = vec![
-        ("url".to_string(), url.clone()),
-        ("strategy".to_string(), cli.strategy.clone()),
-        ("key".to_string(), api_key),
-    ];
-
-    for cat in &categories {
-        query.push(("category".to_string(), cat.clone()));
-    }
+    let strategies: Vec<&str> = if cli.strategy == "both" {
+        vec!["mobile", "desktop"]
+    } else {
+        vec![cli.strategy.as_str()]
+    };
 
     let client = reqwest::Client::new();
-    let response = client
-        .get("https://www.googleapis.com/pagespeedonline/v5/runPagespeed")
-        .query(&query)
-        .send()
-        .await?;
 
-    let status = response.status();
-    let json: Value = response.json().await?;
+    for strategy in &strategies {
+        eprintln!("Running {} analysis...", strategy);
 
-    if !status.is_success() {
-        let error_msg = json
-            .pointer("/error/message")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown error");
-        eprintln!("API error {}: {}", status, error_msg);
-        std::process::exit(1);
+        let mut query = vec![
+            ("url".to_string(), url.clone()),
+            ("strategy".to_string(), strategy.to_string()),
+            ("key".to_string(), api_key.clone()),
+        ];
+        for cat in &categories {
+            query.push(("category".to_string(), cat.clone()));
+        }
+
+        let response = client
+            .get("https://www.googleapis.com/pagespeedonline/v5/runPagespeed")
+            .query(&query)
+            .send()
+            .await?;
+
+        let status = response.status();
+        let json: Value = response.json().await?;
+
+        if !status.is_success() {
+            let error_msg = json
+                .pointer("/error/message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
+            eprintln!("API error {} ({}): {}", status, strategy, error_msg);
+            continue;
+        }
+
+        let output = build_report(&json, &url, strategy, &categories);
+        let (folder, basename) = build_output_path(&url, strategy);
+        std::fs::create_dir_all(&folder)?;
+
+        std::fs::write(
+            format!("{}/report.json", folder),
+            serde_json::to_string_pretty(&output)?,
+        )?;
+        std::fs::write(format!("{}/summary.txt", folder), build_summary(&output))?;
+
+        let extracted = extract_assets(&json, &folder);
+
+        eprintln!("Output folder: {}/", folder);
+        eprintln!("  - report.json");
+        eprintln!("  - summary.txt");
+        for f in &extracted {
+            eprintln!("  - {}", f);
+        }
+
+        println!("{}", basename);
     }
-
-    let output = build_report(&json, &url, &cli.strategy, &categories);
-
-    let (folder, basename) = build_output_path(&url, &cli.strategy);
-    std::fs::create_dir_all(&folder)?;
-
-    let report_path = format!("{}/report.json", folder);
-    let json_str = serde_json::to_string_pretty(&output)?;
-    std::fs::write(&report_path, &json_str)?;
-
-    let summary = build_summary(&output);
-    std::fs::write(format!("{}/summary.txt", folder), &summary)?;
-
-    eprintln!("Output folder: {}/", folder);
-    eprintln!("  - report.json");
-    eprintln!("  - summary.txt");
-
-    println!("{}", basename);
 
     Ok(())
 }
@@ -277,6 +290,181 @@ fn current_target() -> &'static str {
     return "aarch64-pc-windows-msvc";
     #[allow(unreachable_code)]
     "unknown"
+}
+
+fn decode_b64(data: &str) -> Option<Vec<u8>> {
+    // strip data URI prefix if present: "data:image/jpeg;base64,..."
+    let raw = if let Some(pos) = data.find("base64,") {
+        &data[pos + 7..]
+    } else {
+        data
+    };
+    use std::io::Read;
+    let mut decoder = flate2::read::DeflateDecoder::new(std::io::Cursor::new(raw.as_bytes()));
+    // try raw base64 first (not deflate)
+    drop(decoder);
+    base64_decode(raw)
+}
+
+fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut table = [255u8; 256];
+    for (i, &c) in alphabet.iter().enumerate() {
+        table[c as usize] = i as u8;
+    }
+    let s = s.trim().replace(['\n', '\r', ' '], "");
+    let s = s.trim_end_matches('=');
+    let mut out = Vec::with_capacity(s.len() * 3 / 4);
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i + 3 < bytes.len() {
+        let a = table[bytes[i] as usize];
+        let b = table[bytes[i + 1] as usize];
+        let c = table[bytes[i + 2] as usize];
+        let d = table[bytes[i + 3] as usize];
+        if a == 255 || b == 255 || c == 255 || d == 255 { return None; }
+        out.push((a << 2) | (b >> 4));
+        out.push((b << 4) | (c >> 2));
+        out.push((c << 6) | d);
+        i += 4;
+    }
+    match bytes.len() - i {
+        2 => {
+            let a = table[bytes[i] as usize];
+            let b = table[bytes[i + 1] as usize];
+            if a == 255 || b == 255 { return None; }
+            out.push((a << 2) | (b >> 4));
+        }
+        3 => {
+            let a = table[bytes[i] as usize];
+            let b = table[bytes[i + 1] as usize];
+            let c = table[bytes[i + 2] as usize];
+            if a == 255 || b == 255 || c == 255 { return None; }
+            out.push((a << 2) | (b >> 4));
+            out.push((b << 4) | (c >> 2));
+        }
+        _ => {}
+    }
+    Some(out)
+}
+
+fn mime_to_ext(data_uri: &str) -> &str {
+    if data_uri.contains("image/jpeg") || data_uri.contains("image/jpg") { "jpeg" }
+    else if data_uri.contains("image/webp") { "webp" }
+    else if data_uri.contains("image/gif") { "gif" }
+    else { "png" }
+}
+
+fn save_image(data_uri: &str, path: &str) -> bool {
+    let raw = if let Some(pos) = data_uri.find("base64,") {
+        &data_uri[pos + 7..]
+    } else {
+        data_uri
+    };
+    match base64_decode(raw) {
+        Some(bytes) => std::fs::write(path, bytes).is_ok(),
+        None => false,
+    }
+}
+
+fn extract_assets(raw: &Value, folder: &str) -> Vec<String> {
+    let mut saved = Vec::new();
+    let lhr = &raw["lighthouseResult"];
+    let audits = &lhr["audits"];
+
+    // 1. full page screenshot
+    let fps = &lhr["fullPageScreenshot"]["screenshot"];
+    if let Some(data) = fps["data"].as_str() {
+        if !data.is_empty() {
+            let ext = mime_to_ext(data);
+            let path = format!("{}/screenshot-full-page.{}", folder, ext);
+            if save_image(data, &path) {
+                saved.push(format!("screenshot-full-page.{}", ext));
+            }
+        }
+    }
+
+    // 2. final screenshot
+    if let Some(data) = audits["final-screenshot"]["details"]["data"].as_str() {
+        if !data.is_empty() {
+            let ext = mime_to_ext(data);
+            let path = format!("{}/screenshot-final.{}", folder, ext);
+            if save_image(data, &path) {
+                saved.push(format!("screenshot-final.{}", ext));
+            }
+        }
+    }
+
+    // 3. filmstrip thumbnails
+    if let Some(items) = audits["screenshot-thumbnails"]["details"]["items"].as_array() {
+        if !items.is_empty() {
+            let dir = format!("{}/filmstrip", folder);
+            if std::fs::create_dir_all(&dir).is_ok() {
+                for (i, item) in items.iter().enumerate() {
+                    if let Some(data) = item["data"].as_str() {
+                        let ts = item["timestamp"].as_f64().unwrap_or(0.0);
+                        let ms = (ts / 1000.0).round() as u64;
+                        let ext = mime_to_ext(data);
+                        let name = format!("filmstrip/{:04}-{}ms.{}", i, ms, ext);
+                        let path = format!("{}/{}", folder, name);
+                        if save_image(data, &path) {
+                            saved.push(name);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. resource summary (save as resources.json for easy parsing)
+    if let Some(items) = audits["resource-summary"]["details"]["items"].as_array() {
+        if !items.is_empty() {
+            let path = format!("{}/resources.json", folder);
+            if let Ok(s) = serde_json::to_string_pretty(items) {
+                if std::fs::write(&path, s).is_ok() {
+                    saved.push("resources.json".to_string());
+                }
+            }
+        }
+    }
+
+    // 5. network requests (save as network-requests.json)
+    if let Some(items) = audits["network-requests"]["details"]["items"].as_array() {
+        if !items.is_empty() {
+            let path = format!("{}/network-requests.json", folder);
+            if let Ok(s) = serde_json::to_string_pretty(items) {
+                if std::fs::write(&path, s).is_ok() {
+                    saved.push("network-requests.json".to_string());
+                }
+            }
+        }
+    }
+
+    // 6. main thread tasks (save as main-thread-tasks.json)
+    if let Some(items) = audits["main-thread-tasks"]["details"]["items"].as_array() {
+        if !items.is_empty() {
+            let path = format!("{}/main-thread-tasks.json", folder);
+            if let Ok(s) = serde_json::to_string_pretty(items) {
+                if std::fs::write(&path, s).is_ok() {
+                    saved.push("main-thread-tasks.json".to_string());
+                }
+            }
+        }
+    }
+
+    // 7. third parties (save as third-parties.json)
+    if let Some(items) = audits["third-parties-insight"]["details"]["items"].as_array() {
+        if !items.is_empty() {
+            let path = format!("{}/third-parties.json", folder);
+            if let Ok(s) = serde_json::to_string_pretty(items) {
+                if std::fs::write(&path, s).is_ok() {
+                    saved.push("third-parties.json".to_string());
+                }
+            }
+        }
+    }
+
+    saved
 }
 
 fn build_output_path(url: &str, strategy: &str) -> (String, String) {
