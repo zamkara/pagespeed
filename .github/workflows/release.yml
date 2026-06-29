@@ -1,0 +1,252 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: false
+            archive: tar.gz
+
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+            archive: tar.gz
+
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
+            archive: tar.gz
+
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+            archive: tar.gz
+
+          - target: armv7-unknown-linux-gnueabihf
+            os: ubuntu-latest
+            cross: true
+            archive: tar.gz
+
+          - target: armv7-unknown-linux-musleabihf
+            os: ubuntu-latest
+            cross: true
+            archive: tar.gz
+
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            cross: false
+            archive: tar.gz
+
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            cross: false
+            archive: tar.gz
+
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            cross: false
+            archive: zip
+
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            cross: false
+            archive: zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross == true
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build (native)
+        if: matrix.cross == false
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build (cross)
+        if: matrix.cross == true
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Package (Unix)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          BIN=target/${{ matrix.target }}/release/pagespeed
+          ARCHIVE=pagespeed-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
+          tar -czf "$ARCHIVE" -C "$(dirname $BIN)" "$(basename $BIN)"
+          echo "ASSET=$ARCHIVE" >> $GITHUB_ENV
+          sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
+
+      - name: Package (Windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $bin = "target/${{ matrix.target }}/release/pagespeed.exe"
+          $archive = "pagespeed-${{ github.ref_name }}-${{ matrix.target }}.zip"
+          Compress-Archive -Path $bin -DestinationPath $archive
+          "ASSET=$archive" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
+          "$hash  $archive" | Out-File "$archive.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.ASSET }}.sha256
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Gather build info
+        id: info
+        run: |
+          TAG="${{ github.ref_name }}"
+          COMMIT="${{ github.sha }}"
+          SHORT="${COMMIT:0:8}"
+          DATE=$(date -u "+%Y-%m-%d %H:%M:%S UTC")
+          PREV_TAG=$(git tag --sort=-version:refname | grep -v "^${TAG}$" | head -1)
+
+          echo "tag=$TAG"           >> $GITHUB_OUTPUT
+          echo "commit=$COMMIT"     >> $GITHUB_OUTPUT
+          echo "short=$SHORT"       >> $GITHUB_OUTPUT
+          echo "date=$DATE"         >> $GITHUB_OUTPUT
+          echo "prev_tag=$PREV_TAG" >> $GITHUB_OUTPUT
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV="${{ steps.info.outputs.prev_tag }}"
+          if [ -n "$PREV" ]; then
+            LOG=$(git log "$PREV".."${{ steps.info.outputs.tag }}" \
+              --pretty=format:"- %s ([%h](https://github.com/${{ github.repository }}/commit/%H)) — %an" \
+              --no-merges)
+          else
+            LOG=$(git log --pretty=format:"- %s ([%h](https://github.com/${{ github.repository }}/commit/%H)) — %an" \
+              --no-merges)
+          fi
+          echo "log<<EOF" >> $GITHUB_OUTPUT
+          echo "$LOG"     >> $GITHUB_OUTPUT
+          echo "EOF"      >> $GITHUB_OUTPUT
+
+      - name: Generate SHA256 table
+        id: checksums
+        run: |
+          TABLE="| File | SHA256 |"$'\n'"| --- | --- |"
+          for f in artifacts/*.sha256; do
+            HASH=$(awk '{print $1}' "$f")
+            FILE=$(basename "${f%.sha256}")
+            TABLE="$TABLE"$'\n'"| \`$FILE\` | \`$HASH\` |"
+          done
+          echo "table<<EOF" >> $GITHUB_OUTPUT
+          echo "$TABLE"     >> $GITHUB_OUTPUT
+          echo "EOF"        >> $GITHUB_OUTPUT
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "${{ steps.info.outputs.tag }}"
+          body: |
+            ## pagespeed ${{ steps.info.outputs.tag }}
+
+            CLI tool untuk Google PageSpeed Insights — output JSON lengkap level Lighthouse.
+
+            ---
+
+            ### Build Info
+
+            | Key | Value |
+            | --- | --- |
+            | Tag | `${{ steps.info.outputs.tag }}` |
+            | Commit | [`${{ steps.info.outputs.short }}`](https://github.com/${{ github.repository }}/commit/${{ steps.info.outputs.commit }}) |
+            | Build date | `${{ steps.info.outputs.date }}` |
+            | Rust toolchain | stable |
+
+            ---
+
+            ### Changelog
+
+            ${{ steps.changelog.outputs.log }}
+
+            ---
+
+            ### Targets
+
+            | Target | OS | Arch |
+            | --- | --- | --- |
+            | `x86_64-unknown-linux-gnu` | Linux | x86\_64 (glibc) |
+            | `x86_64-unknown-linux-musl` | Linux | x86\_64 (static) |
+            | `aarch64-unknown-linux-gnu` | Linux | ARM64 (glibc) |
+            | `aarch64-unknown-linux-musl` | Linux | ARM64 (static) |
+            | `armv7-unknown-linux-gnueabihf` | Linux | ARMv7 (glibc) |
+            | `armv7-unknown-linux-musleabihf` | Linux | ARMv7 (static) |
+            | `x86_64-apple-darwin` | macOS | Intel |
+            | `aarch64-apple-darwin` | macOS | Apple Silicon |
+            | `x86_64-pc-windows-msvc` | Windows | x86\_64 |
+            | `aarch64-pc-windows-msvc` | Windows | ARM64 |
+
+            ---
+
+            ### Checksums (SHA256)
+
+            ${{ steps.checksums.outputs.table }}
+
+            ---
+
+            ### Usage
+
+            ```bash
+            # Linux/macOS
+            chmod +x pagespeed
+            ./pagespeed <domain> --pretty
+
+            # Windows
+            .\pagespeed.exe <domain> --pretty
+            ```
+
+            Set API key sekali, tersimpan otomatis di shell config:
+            ```
+            PAGESPEED_API_KEY=AIza... ./pagespeed example.com
+            ```
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.zip
+            artifacts/*.sha256
+          draft: false
+          prerelease: false
